@@ -8,11 +8,11 @@ import scala.io.Source
 import scala.util.{Failure, Success, Try}
 import scala.util.parsing.combinator.RegexParsers
 
-case class Ecos(name: String, port: Int)(implicit exec: ExecutionContext) {
-  val socket = new Socket(name, port)
-  val in = Source.fromInputStream(socket.getInputStream, "UTF-8").getLines()
-  val out = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream, "UTF-8"))
-  val lines = Var[String]
+case class Ecos(name: String, port: Int = 15471)(implicit exec: ExecutionContext) {
+  private var socket = new Socket(name, port)
+  private var in = Source.fromInputStream(socket.getInputStream, "UTF-8").getLines()
+  private var out = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream, "UTF-8"))
+  private val lines = Var[String]
   val messages = lines
     .map(Ecos.parseLine)
     .scan(Try(Option.empty[StartLine], List.empty[EntryLine], Option.empty[EndLine])) {
@@ -36,9 +36,15 @@ case class Ecos(name: String, port: Int)(implicit exec: ExecutionContext) {
         Failure(error)
     }
   object Reader extends Runnable {
-    def run() = for (line <- in) {
-      lines.publish(line)
-      println(s"ECOS >>> $line")
+    def run() = {
+      for (line <- in) {
+        lines.publish(line)
+        println(s"  ECOS >>> $line")
+      }
+      socket = new Socket(name, port)
+      in = Source.fromInputStream(socket.getInputStream, "UTF-8").getLines()
+      out = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream, "UTF-8"))
+      run()
     }
   }
   new Thread(Reader).start()

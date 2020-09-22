@@ -1,3 +1,4 @@
+import mw.json.Json
 import mw.tchoo.ecos.Ecos
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.util.{Failure, Success}
@@ -9,4 +10,5 @@ object Test extends App {
     case Failure(err) => System.err.println(err)
   }
   ecos.send("get(1,info)")
+  println(Json.decode[Map[String, Int]]("""{"Marc":54,"Claire":52}"""))
 }
