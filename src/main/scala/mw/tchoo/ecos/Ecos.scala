@@ -2,13 +2,20 @@ package mw.tchoo.ecos
 
 import java.io.{BufferedWriter, OutputStreamWriter}
 import java.net.Socket
-import mw.react.Var
+import mw.persist.{DecodeException, Decoder, Encoder}
+import mw.persist.json.{Json, JsonArray, JsonNull, JsonNumber, JsonObject, JsonString}
+import mw.react.{Def, Var}
+import mw.tchoo.CommandStation
+import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext
 import scala.io.Source
 import scala.util.{Failure, Success, Try}
 import scala.util.parsing.combinator.RegexParsers
 
-case class Ecos(name: String, port: Int = 15471)(implicit exec: ExecutionContext) {
+case class Ecos(name: String, port: Int = 15471)(implicit exec: ExecutionContext) extends CommandStation {
+  ecos =>
+  type MyBloc = EcosBloc
+  var blocs = Set.empty[EcosBloc]
   private var socket = new Socket(name, port)
   private var in = Source.fromInputStream(socket.getInputStream, "UTF-8").getLines()
   private var out = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream, "UTF-8"))
@@ -35,11 +42,19 @@ case class Ecos(name: String, port: Int = 15471)(implicit exec: ExecutionContext
       case Failure(error) =>
         Failure(error)
     }
+  private var views = Set.empty[Int]
+  private var updatesCache = Map.empty[(Int, String), Def[List[String]]]
+  val protocolVersion = (for {
+    Success(msg) <- messages
+    EntryLine(1, args) <- msg
+    Argument("ProtocolVersion", num :: Nil) <- args
+  } yield num).head
+  send("get(1,info)")
   object Reader extends Runnable {
-    def run() = {
+    @tailrec def run() = {
       for (line <- in) {
         lines.publish(line)
-        println(s"  ECOS >>> $line")
+        println(s"  $ecos >>> $line")
       }
       socket = new Socket(name, port)
       in = Source.fromInputStream(socket.getInputStream, "UTF-8").getLines()
@@ -52,11 +67,61 @@ case class Ecos(name: String, port: Int = 15471)(implicit exec: ExecutionContext
     out.write(request)
     out.newLine()
     out.flush()
-    println(s"ECOS <<< $request")
+    println(s"$ecos <<< $request")
+  }
+  def updates(OID: Int, ATTR: String): Def[List[String]] = updatesCache.get(OID, ATTR) match {
+    case Some(d) => d
+    case None =>
+      val d = for {
+        Success(msg) <- messages
+        EntryLine(OID, args) <- msg.entries
+        Argument(ATTR, values) <- args
+      } yield values
+      updatesCache += (OID, ATTR) -> d
+      if (!views.contains(OID)) {
+        views += OID
+        send(s"request($OID,view)")
+      }
+      send(s"get($OID,$ATTR)")
+      d
   }
   override def toString = s"Ecos($name:$port)"
 }
 object Ecos extends RegexParsers {
+  implicit def jsonDecode(implicit exec: ExecutionContext): Decoder[Json, Ecos] = {
+    case obj@JsonObject(map) =>
+      val name = map.get("name") match {
+        case Some(JsonString(name)) => scala.util.Success(name)
+        case Some(json) => scala.util.Failure(DecodeException("string", json))
+        case None => scala.util.Failure(DecodeException(""""name" attribute""", obj))
+      }
+      val port = map.get("port") match {
+        case Some(JsonNumber(num)) => scala.util.Success(Some(num.toInt))
+        case Some(JsonNull) => scala.util.Success(None)
+        case Some(json) => scala.util.Failure(DecodeException("null or number", json))
+        case None => scala.util.Success(None)
+      }
+      for {
+        name <- name
+        port <- port
+      } yield {
+        implicit val ecos: Ecos = port match {
+          case Some(port) => Ecos(name, port)
+          case None => Ecos(name)
+        }
+        ecos.blocs = map.get("blocs") match {
+          case Some(array@JsonArray(_)) => Json.decode[Set[EcosBloc]](array).get
+          case Some(JsonNull) => Set.empty[EcosBloc]
+          case Some(json) => throw DecodeException("null or array", json)
+          case None => Set.empty[EcosBloc]
+        }
+        ecos
+      }
+    case json => scala.util.Failure(DecodeException("object", json))
+  }
+  implicit def jsonEncode: Encoder[Ecos, JsonObject] = { implicit ecos =>
+    JsonObject("name" -> ecos.name, "port" -> ecos.port, "blocs" -> ecos.blocs)
+  }
   def parseLine(text: String): Try[Line] = parseAll(line, text) match {
     case Success(obj, _) => scala.util.Success(obj)
     case NoSuccess(msg, _) => scala.util.Failure(ParseException(msg))

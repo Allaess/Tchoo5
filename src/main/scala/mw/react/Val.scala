@@ -17,7 +17,8 @@ trait Val[+T] extends Def[T] {
   }
   def flatten[S](implicit id: T => Val[S]) = flatMap(id)
 }
-object Val {
+object Val extends LowPriorityImplicits {
+  def apply[T](future: Future[T])(implicit exec: ExecutionContext) = FromFuture(future)
   class Impl[T](implicit exec: ExecutionContext) extends Val[T] {
     source =>
     private val promise = Promise[Option[T]]()
@@ -115,6 +116,7 @@ object Val {
       })
       override def toString = s"Flatmapped${super.toString} <<< $source"
     }
+    def head: Val[T] = this
     protected def update(expr: => T) = promise.tryComplete(Try(Some(expr)))
     protected def publish(t: T) = promise.trySuccess(Some(t))
     protected def close() = promise.trySuccess(None)
@@ -156,6 +158,7 @@ object Val {
       case Success(publisher) => publisher
       case Failure(error) => Failed(error)
     }
+    def head: Val[T] = this
     override def toString = s"Val($t)"
   }
   case class Failed(error: Throwable) extends Val[Nothing] {
@@ -168,6 +171,7 @@ object Val {
     def withFilter(p: Nothing => Boolean) = this
     def flatMap[S](f: Nothing => Val[S]) = this
     def flatMap[S](f: Nothing => Def[S]): Def[S] = this
+    def head: Val[Nothing] = this
     override def toString = s"Val(<$error>)"
   }
   object Closed extends Val[Nothing] {
@@ -180,6 +184,7 @@ object Val {
     def withFilter(p: Nothing => Boolean) = this
     def flatMap[S](f: Nothing => Val[S]) = this
     def flatMap[S](f: Nothing => Def[S]): Def[S] = this
+    def head: Val[Nothing] = this
     override def toString = "Val()"
   }
 }

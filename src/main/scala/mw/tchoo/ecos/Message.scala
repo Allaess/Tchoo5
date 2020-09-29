@@ -5,6 +5,10 @@ sealed trait Message {
   def entries: List[EntryLine]
   def errorNumber: Int
   def errorMessage: String
+  def foreach(action: EntryLine => Unit) = entries.foreach(action)
+  def map[S](f: EntryLine => S) = entries.map(f)
+  def withFilter(p: EntryLine => Boolean) = entries.withFilter(p)
+  def flatMap[S](f: EntryLine => List[S]) = entries.flatMap(f)
 }
 object Message {
   def apply(start: StartLine, entries: List[EntryLine], end: EndLine): Message = start match {

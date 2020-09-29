@@ -10,6 +10,7 @@ trait Def[+T] {
   def map[S](f: T => S): Def[S]
   def withFilter(p: T => Boolean): Def[T]
   def flatMap[S](f: T => Def[S]): Def[S]
+  def head: Val[T]
   def collect[S](pf: PartialFunction[T, S]) = withFilter(pf.isDefinedAt).map(pf)
   def scan[S](init: S)(f: (S, T) => S) = {
     var s = init
@@ -92,45 +93,85 @@ object Def {
     }
     def flatMap[S](f: T => Def[S]): Def[S] = new Def.Impl[S] {
       result =>
-      source.subscribe(new Subscriber[T] {
+      private val events = Var[Event]
+      events.subscribe(new Subscriber[Event] {
         private var cancelMain = { () => }
         private var cancelSub = { () => }
-        private var current: Def[S] = Silent
+        private var current: Def[S] = Def.Silent
         private var closing = false
-        def onCancel(action: => Unit) = cancelMain = { () => action }
-        def published(t: T) = Try(f(t)) match {
-          case Success(publisher) =>
-            current = publisher
-            publisher.subscribe(new Subscriber[S] {
-              def onCancel(action: => Unit) =
-                if (current == publisher) cancelSub = { () => action }
-                else action
-              def published(s: S) = if (current == publisher) result.publish(s)
-              def closed() = if (current == publisher) {
-                current = Silent
-                if (closing) result.close()
-              }
-              def failed(error: Throwable) = if (current == publisher) {
-                result.fail(error)
-                cancelMain()
-              }
-            })
-          case Failure(error) =>
-            result.fail(error)
-            cancelMain()
+        def onCancel(action: => Unit) = {}
+        def published(event: Event) = event match {
+          case OnMainCancel(action) =>
+            cancelMain = action
+          case MainPublished(t) => Try(f(t)) match {
+            case Success(sub) =>
+              current = sub
+              sub.subscribe(new Subscriber[S] {
+                def onCancel(action: => Unit) = events.publish(OnSubCancel(sub, { () => action }))
+                def published(s: S) = events.publish(SubPublished(sub, s))
+                def closed() = events.publish(SubClosed(sub))
+                def failed(error: Throwable) = events.publish(SubFailed(sub, error))
+              })
+            case Failure(err) =>
+              events.fail(err)
+              cancelMain()
+              cancelSub()
+          }
+          case MainClosed =>
+            closing = true
+            if (current == Def.Silent) events.close()
+          case MainFailed(error) =>
+            events.fail(error)
             cancelSub()
+          case OnSubCancel(publisher, action) =>
+            if (current == publisher) cancelSub = action
+            else action()
+          case SubPublished(publisher, s) =>
+            if (current == publisher) result.publish(s)
+          case SubClosed(publisher) =>
+            if (current == publisher) {
+              current = Def.Silent
+              if (closing) result.close()
+            }
+          case SubFailed(publisher, error) =>
+            if(current==publisher){
+              result.fail(error)
+              cancelMain()
+            }
         }
-        def closed() = {
-          closing = true
-          if (current == Silent) result.close()
+        def closed() = result.close()
+        def failed(error: Throwable) = result.fail(error)
+      })
+      source.subscribe(new Subscriber[T] {
+        def onCancel(action: => Unit) = events.publish(OnMainCancel { () => action })
+        def published(t: T) = events.publish(MainPublished(t))
+        def closed() = events.publish(MainClosed)
+        def failed(error: Throwable) = events.publish(MainFailed(error))
+      })
+      sealed trait Event
+      case class OnMainCancel(action: () => Unit) extends Event
+      case class MainPublished(t: T) extends Event
+      case object MainClosed extends Event
+      case class MainFailed(error: Throwable) extends Event
+      case class OnSubCancel(publisher: Def[S], action: () => Unit) extends Event
+      case class SubPublished(publisher: Def[S], s: S) extends Event
+      case class SubClosed(publisher: Def[S]) extends Event
+      case class SubFailed(publisher: Def[S], error: Throwable) extends Event
+    }
+    def head: Val[T] = new Val.Impl[T] {
+      result =>
+      source.subscribe(new Subscriber[T] {
+        private var cancel = { () => }
+        def onCancel(action: => Unit) = cancel = { () => action }
+        def published(t: T) = {
+          result.publish(t)
+          cancel()
         }
-        def failed(error: Throwable) = {
-          result.fail(error)
-          cancelSub()
-        }
+        def closed() = result.close()
+        def failed(error: Throwable) = result.fail(error)
         override def toString = s"Subscriber($result)"
       })
-      override def toString = s"FlatMapped${super.toString} <<< $source"
+      override def toString = s"Head${super.toString} <<< $source"
     }
     protected def update(expr: => T) = append(current, Try(ACons(expr)))
     protected def publish(t: T) = append(current, Success(ACons(t)))
@@ -163,6 +204,19 @@ object Def {
     def map[S](f: Nothing => S) = this
     def withFilter(p: Nothing => Boolean) = this
     def flatMap[S](f: Nothing => Def[S]) = this
+    def head = Val.Closed
     override def toString = "Def.Silent"
+  }
+  implicit class FromSeq[T](seq: Seq[T]) extends Def[T] {
+    def subscribe(subscriber: Subscriber[T]) = {
+      subscriber.onCancel {}
+      for (t <- seq) subscriber.published(t)
+      subscriber.closed()
+    }
+    def foreach(action: T => Unit) = for (t <- seq) action(t)
+    def map[S](f: T => S) = FromSeq(seq.map(f))
+    def withFilter(p: T => Boolean) = FromSeq(seq.filter(p))
+    def flatMap[S](f: T => Def[S]) = ???
+    def head = if (seq.isEmpty) Val.Closed else Val.Value(seq.head)
   }
 }
