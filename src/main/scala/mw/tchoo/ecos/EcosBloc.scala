@@ -5,7 +5,7 @@ import mw.persist.json.{Json, JsonNumber, JsonObject}
 import mw.tchoo.Bloc
 import scala.util.{Failure, Try}
 
-class EcosBloc(val commandStation: Ecos, val oid: Int, val port: Int) extends Bloc {
+case class EcosBloc(commandStation: Ecos, oid: Int, port: Int) extends Bloc {
   type Id = (Int, Int)
   val id = (oid, port)
   val ecosState = for (hex :: Nil <- commandStation.updates(oid, "state")) yield {
@@ -51,18 +51,25 @@ class EcosBloc(val commandStation: Ecos, val oid: Int, val port: Int) extends Bl
   }
 }
 object EcosBloc {
-  def apply(ecos: Ecos, oid: Int, port: Int) = new EcosBloc(ecos, oid, port)
   implicit def jsonEncode: Encoder[EcosBloc, JsonObject] = { bloc =>
     JsonObject("oid" -> bloc.oid, "port" -> bloc.port)
   }
   implicit def jsonDecode(implicit ecos: Ecos): Decoder[Json, EcosBloc] = {
-    case json@JsonObject(map) => (map.get("oid"), map.get("port")) match {
-      case (Some(JsonNumber(oid)), Some(JsonNumber(port))) => Try(EcosBloc(ecos, oid.toInt, port.toInt))
-      case (Some(json), _) => Failure(DecodeException("number", json))
-      case (None, _) => Failure(DecodeException(""""oid" attribute""", json))
-      case (_, Some(json)) => Failure(DecodeException("number", json))
-      case (_, None) => Failure(DecodeException(""""port" attribute""", json))
-    }
+    case obj@JsonObject(map) =>
+      val oid = map.get("oid") match {
+        case Some(JsonNumber(oid)) => Try(oid.toInt)
+        case Some(json) => Failure(DecodeException("number", json))
+        case None => Failure(DecodeException(""""oid" attribute""", obj))
+      }
+      val port = map.get("port") match {
+        case Some(JsonNumber(port)) => Try(port.toInt)
+        case Some(json) => Failure(DecodeException("number", json))
+        case None => Failure(DecodeException(""""port" attribute""", obj))
+      }
+      for {
+        oid <- oid
+        port <- port
+      } yield EcosBloc(ecos, oid, port)
     case json => Failure(DecodeException("object", json))
   }
 }

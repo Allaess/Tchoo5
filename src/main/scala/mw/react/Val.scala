@@ -27,14 +27,23 @@ object Val extends LowPriorityImplicits {
       subscriber.onCancel {
         cancelled = true
       }
-      promise.future.onComplete {
-        case Success(Some(t)) =>
+      promise.future.value match {
+        case Some(Success(Some(t))) =>
           subscriber.published(t)
           subscriber.closed()
-        case Success(None) =>
+        case Some(Success(None)) =>
           subscriber.closed()
-        case Failure(error) =>
+        case Some(Failure(error)) =>
           subscriber.failed(error)
+        case None => promise.future.onComplete {
+          case Success(Some(t)) =>
+            subscriber.published(t)
+            subscriber.closed()
+          case Success(None) =>
+            subscriber.closed()
+          case Failure(error) =>
+            subscriber.failed(error)
+        }
       }
     }
     def foreach(action: T => Unit) = promise.future.onComplete {

@@ -30,7 +30,17 @@ object Def {
       subscriber.onCancel {
         cancelled = true
       }
-      monitor(current.future)
+      current.future.value match {
+        case Some(Success(ACons(head, tail))) =>
+          subscriber.published(head)
+          monitor(tail.future)
+        case Some(Success(ANil)) =>
+          subscriber.closed()
+        case Some(Failure(error)) =>
+          subscriber.failed(error)
+        case None =>
+          monitor(current.future)
+      }
       def monitor(future: Future[AList]): Unit = future.onComplete {
         case _ if cancelled =>
         case Success(ACons(head, tail)) =>
@@ -134,7 +144,7 @@ object Def {
               if (closing) result.close()
             }
           case SubFailed(publisher, error) =>
-            if(current==publisher){
+            if (current == publisher) {
               result.fail(error)
               cancelMain()
             }

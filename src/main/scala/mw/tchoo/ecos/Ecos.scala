@@ -16,6 +16,7 @@ case class Ecos(name: String, port: Int = 15471)(implicit exec: ExecutionContext
   ecos =>
   type MyBloc = EcosBloc
   var blocs = Set.empty[EcosBloc]
+  var routes = Set.empty[EcosRoute]
   private var socket = new Socket(name, port)
   private var in = Source.fromInputStream(socket.getInputStream, "UTF-8").getLines()
   private var out = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream, "UTF-8"))
@@ -111,9 +112,15 @@ object Ecos extends RegexParsers {
         }
         ecos.blocs = map.get("blocs") match {
           case Some(array@JsonArray(_)) => Json.decode[Set[EcosBloc]](array).get
-          case Some(JsonNull) => Set.empty[EcosBloc]
+          case Some(JsonNull) => Set.empty
           case Some(json) => throw DecodeException("null or array", json)
-          case None => Set.empty[EcosBloc]
+          case None => Set.empty
+        }
+        ecos.routes = map.get("routes") match {
+          case Some(array@JsonArray(_)) => Json.decode[Set[EcosRoute]](array).get
+          case Some(JsonNull) => Set.empty
+          case Some(json) => throw DecodeException("null or array", json)
+          case None => Set.empty
         }
         ecos
       }

@@ -1,9 +1,20 @@
 {
-  "type":  "Ecos",
-  "name":  "192.168.1.68",
-  "port":  15471,
-  "blocs": [
-    {"oid": 200, "port": 0},
-    {"oid": 200, "port": 1}
+  "type":   "Ecos",
+  "name":   "192.168.1.68",
+  "port":   15471,
+  "blocs":  [
+    {
+      "oid":  200,
+      "port": 0,
+      "west": {"button": {"oid": 202, "port": 3}, "signal": {"oid": 10000}},
+      "east": {"button": {"oid": 202, "port": 0}, "signal": {"oid": 10001}}
+    }
+  ],
+  "routes": [
+    {
+      "oid":  30016,
+      "west": {"bloc": {"oid": 200, "port": 0}, "side": "east", "button": {"oid": 202, "port": 1}},
+      "east": {"bloc": {"oid": 200, "port": 1}, "side": "west", "button": {"oid": 202, "port": 2}}
+    }
   ]
 }

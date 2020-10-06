@@ -6,13 +6,18 @@ trait Route {
   val state: Def[Route.State]
   sealed trait End {
     def opposite: End
-    var connected = Option.empty[Bloc#End]
+    private var _connected = Option.empty[Bloc#End]
+    def connected = _connected
+    def connect(that: Bloc#End) = if (!_connected.contains(that)) {
+      _connected = Some(that)
+      that.connect(this)
+    }
   }
-  case object Entry extends End {
-    def opposite = Exit
+  case object West extends End {
+    def opposite = East
   }
-  case object Exit extends End {
-    def opposite = Entry
+  case object East extends End {
+    def opposite = West
   }
 }
 object Route {
